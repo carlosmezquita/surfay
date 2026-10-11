@@ -1,0 +1,40 @@
+name: Verify Surfay
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - run: bun install --frozen-lockfile
+      - run: bun run security:scan
+      - run: bun run lint
+      - run: bun run test
+      - run: TZ=America/Los_Angeles bun run test -- src/domain/forecastTime.test.ts
+      - run: bun run build
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:e2e
+      - name: Record local fixture benchmark
+        run: |
+          mkdir -p test-results
+          bun run benchmark > test-results/benchmark.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-checks
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

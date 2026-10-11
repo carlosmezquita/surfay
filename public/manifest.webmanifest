@@ -1,0 +1,17 @@
+{
+  "name": "Surfay · Costa galega",
+  "short_name": "Surfay",
+  "description": "Previsión de surf especializada en la costa gallega.",
+  "start_url": "/map",
+  "display": "standalone",
+  "background_color": "#eef2f2",
+  "theme_color": "#062238",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

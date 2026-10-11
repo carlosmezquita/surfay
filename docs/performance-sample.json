@@ -1,0 +1,28 @@
+{
+  "measuredAt": "2026-10-11T00:35:52.589Z",
+  "scope": "Local production Worker + ephemeral Miniflare D1; synthetic provider replies; no network/edge latency or process startup",
+  "runtime": {
+    "node": "v26.3.0",
+    "bun": "1.4.3",
+    "platform": "linux",
+    "architecture": "x64"
+  },
+  "scoringModelVersion": 8,
+  "spots": 13,
+  "hoursPerSpot": 168,
+  "coldRefreshMs": 115.31,
+  "fixtureProviderCalls": 4,
+  "cachedSummary": {
+    "samples": 20,
+    "p50Ms": 20.34,
+    "p95Ms": 23.1,
+    "responseBytes": 684443
+  },
+  "cachedSpot": {
+    "slug": "baldaio",
+    "samples": 20,
+    "p50Ms": 5.35,
+    "p95Ms": 7.93,
+    "responseBytes": 198234
+  }
+}
