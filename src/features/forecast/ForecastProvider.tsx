@@ -28,7 +28,10 @@ export function ForecastProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     setIsRefreshing(true)
     try { accept(await requestSummary()) }
-    catch (err) { setError(err instanceof Error ? err.message : 'Forecast refresh failed') }
+    catch (err) {
+      setError(err instanceof Error ? err.message : 'Forecast refresh failed')
+      setStatus(current => current === 'ready' ? 'ready' : 'error')
+    }
     finally { setIsRefreshing(false) }
   }, [accept])
 
