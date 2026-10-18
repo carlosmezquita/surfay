@@ -16,7 +16,7 @@ const build = Bun.spawn([process.execPath, 'run', 'build'], {
 })
 const result = await build.exited
 if (result !== 0) process.exit(result)
-const deploy = Bun.spawn([process.execPath, 'x', 'wrangler', 'deploy'], {
+const deploy = Bun.spawn([process.execPath, 'x', 'wrangler', 'deploy', '--config', 'dist/surfay/wrangler.json'], {
   stdin: 'inherit', stdout: 'inherit', stderr: 'inherit',
 })
 process.exit(await deploy.exited)
