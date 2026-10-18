@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl, { type Map as MapLibreMap, type Marker } from 'maplibre-gl'
 import type { SpotProfile } from '../../domain/forecast'
+import { useLocale } from '../i18n/localeContext'
+import { MapLoadingSurface } from '../loading/PublicPageSkeletons'
 
 type ForecastMapProps = {
   spots: SpotProfile[]
   activeSlug: string
-  scores: Record<string, number>
+  scores: Record<string, number | null>
   focus: { slug: string; tick: number } | null
   onSelect: (slug: string) => void
 }
@@ -21,6 +23,7 @@ const CLUSTER_LAYER_ID = 'spots-clusters-query'
 const SPOT_LAYER_ID = 'spots-unclustered-query'
 
 export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: ForecastMapProps) {
+  const { t } = useLocale()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markersRef = useRef(new Map<string, Marker>())
@@ -29,12 +32,16 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
   const activeSlugRef = useRef(activeSlug)
   const markerFrameRef = useRef<number | null>(null)
   const [isReady, setIsReady] = useState(false)
+  const [mapFailed, setMapFailed] = useState(false)
+  const [retryAttempt, setRetryAttempt] = useState(0)
+  const scoresLabelRef = useRef({ pending: t('loadingForecast'), score: t('scoreShort') })
 
   useEffect(() => {
     scoresRef.current = scores
     activeSlugRef.current = activeSlug
     onSelectRef.current = onSelect
-  }, [activeSlug, onSelect, scores])
+    scoresLabelRef.current = { pending: t('loadingForecast'), score: t('scoreShort') }
+  }, [activeSlug, onSelect, scores, t])
 
   const spotsById = useMemo(() => {
     const byId = new Map<string, SpotProfile>()
@@ -52,7 +59,7 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
       const root = marker.getElement()
       const button = root.querySelector<HTMLButtonElement>('button')
       const scoreEl = button?.querySelector('span')
-      const displayScore = currentScores[slug] ?? 1
+      const displayScore = currentScores[slug]
       const isActive = slug === currentActive
 
       // MapLibre adds its own `maplibregl-marker` class to this element. Never
@@ -60,9 +67,13 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
       // absolute positioning that keeps the DOM marker attached to the map.
       root.classList.toggle('is-active', isActive)
       if (button) {
-        button.className = `surf-map-marker score-${displayScore}${isActive ? ' is-active' : ''}`
+        button.className = `surf-map-marker ${displayScore == null ? 'score-pending' : `score-${displayScore}`}${isActive ? ' is-active' : ''}`
+        button.setAttribute(
+          'aria-label',
+          `${button.querySelector('small')?.textContent}: ${displayScore == null ? scoresLabelRef.current.pending : `${displayScore}/5`}`,
+        )
       }
-      if (scoreEl) scoreEl.textContent = String(displayScore)
+      if (scoreEl) scoreEl.textContent = displayScore == null ? '—' : String(displayScore)
     }
   }, [])
 
@@ -76,22 +87,22 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
 
     for (const feature of spotFeatures) {
       const props = feature.properties as
-        | { slug?: string; name?: string; longitude?: number; latitude?: number }
-        | undefined
+        { slug?: string; name?: string; longitude?: number; latitude?: number } | undefined
       if (
         !props?.slug ||
         !props.name ||
         typeof props.longitude !== 'number' ||
         typeof props.latitude !== 'number' ||
         seenSpots.has(props.slug)
-      ) continue
+      )
+        continue
       seenSpots.add(props.slug)
 
       const key = `spot:${props.slug}`
       // Source-tile feature geometry can be wrapped. These properties come
       // directly from the catalogue and remain the pin's canonical location.
       const coords: [number, number] = [props.longitude, props.latitude]
-      const displayScore = scoresRef.current[props.slug] ?? 1
+      const displayScore = scoresRef.current[props.slug]
       const isActive = props.slug === activeSlugRef.current
       nextKeys.add(key)
 
@@ -102,11 +113,14 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
 
         const button = document.createElement('button')
         button.type = 'button'
-        button.className = `surf-map-marker score-${displayScore}${isActive ? ' is-active' : ''}`
-        button.setAttribute('aria-label', `${props.name}: ${displayScore} de 5`)
+        button.className = `surf-map-marker ${displayScore == null ? 'score-pending' : `score-${displayScore}`}${isActive ? ' is-active' : ''}`
+        button.setAttribute(
+          'aria-label',
+          `${props.name}: ${displayScore == null ? scoresLabelRef.current.pending : `${displayScore}/5`}`,
+        )
 
         const scoreEl = document.createElement('span')
-        scoreEl.textContent = String(displayScore)
+        scoreEl.textContent = displayScore == null ? '—' : String(displayScore)
         const labelEl = document.createElement('small')
         labelEl.textContent = props.name
         button.append(scoreEl, labelEl)
@@ -131,16 +145,29 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
 
     for (const feature of clusterFeatures) {
       const props = feature.properties as
-        | { cluster_id?: number; point_count?: number; maxScore?: number; sumScore?: number }
+        | {
+            cluster_id?: number
+            point_count?: number
+            maxScore?: number
+            sumScore?: number
+            scoreCount?: number
+          }
         | undefined
-      if (props?.cluster_id === undefined || !props.point_count || seenClusters.has(props.cluster_id)) continue
+      if (
+        props?.cluster_id === undefined ||
+        !props.point_count ||
+        seenClusters.has(props.cluster_id)
+      )
+        continue
       seenClusters.add(props.cluster_id)
 
       const key = `cluster:${props.cluster_id}`
       const coords = (feature.geometry as unknown as { coordinates: [number, number] }).coordinates
       const count = props.point_count
-      const bestScore = Math.round(props.maxScore ?? 1)
-      const avgScore = Math.round(((props.sumScore ?? count) / count) * 10) / 10
+      const bestScore = Math.round(props.maxScore ?? -1)
+      const pending = bestScore < 0
+      const avgScore =
+        Math.round(((props.sumScore ?? 0) / Math.max(1, props.scoreCount ?? count)) * 10) / 10
       nextKeys.add(key)
 
       let marker = markersRef.current.get(key)
@@ -150,12 +177,17 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
 
         const button = document.createElement('button')
         button.type = 'button'
-        button.className = `surf-map-cluster score-${bestScore}`
-        button.setAttribute('aria-label', `${count} spots agrupados, mejor puntuación ${bestScore} de 5`)
-        button.title = `${count} spots · media ${avgScore} de 5`
+        button.className = `surf-map-cluster ${pending ? 'score-pending' : `score-${bestScore}`}`
+        button.setAttribute(
+          'aria-label',
+          `${count} spots · ${pending ? scoresLabelRef.current.pending : `${scoresLabelRef.current.score} ${bestScore}/5`}`,
+        )
+        button.title = pending
+          ? scoresLabelRef.current.pending
+          : `${count} spots · media ${avgScore} de 5`
 
         const scoreEl = document.createElement('span')
-        scoreEl.textContent = String(bestScore)
+        scoreEl.textContent = pending ? '—' : String(bestScore)
         const countEl = document.createElement('small')
         countEl.textContent = `×${count}`
         button.append(scoreEl, countEl)
@@ -187,10 +219,16 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
         const scoreEl = button?.querySelector('span')
         const countEl = button?.querySelector('small')
         if (button) {
-          button.className = `surf-map-cluster score-${bestScore}`
-          button.title = `${count} spots · media ${avgScore} de 5`
+          button.className = `surf-map-cluster ${pending ? 'score-pending' : `score-${bestScore}`}`
+          button.setAttribute(
+            'aria-label',
+            `${count} spots · ${pending ? scoresLabelRef.current.pending : `${scoresLabelRef.current.score} ${bestScore}/5`}`,
+          )
+          button.title = pending
+            ? scoresLabelRef.current.pending
+            : `${count} spots · media ${avgScore} de 5`
         }
-        if (scoreEl) scoreEl.textContent = String(bestScore)
+        if (scoreEl) scoreEl.textContent = pending ? '—' : String(bestScore)
         if (countEl) countEl.textContent = `×${count}`
       }
     }
@@ -213,14 +251,23 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: 'https://tiles.openfreemap.org/styles/liberty',
-      center: [-8.48, 43.42],
-      zoom: 8.5,
-      minZoom: 7.6,
-      maxZoom: 15,
-      attributionControl: false,
+    let map: MapLibreMap
+    try {
+      map = new maplibregl.Map({
+        container: containerRef.current,
+        style: 'https://tiles.openfreemap.org/styles/liberty',
+        center: [-8.48, 43.42],
+        zoom: 8.5,
+        minZoom: 7.6,
+        maxZoom: 15,
+        attributionControl: false,
+      })
+    } catch {
+      const timeout = window.setTimeout(() => setMapFailed(true), 0)
+      return () => window.clearTimeout(timeout)
+    }
+    map.on('error', () => {
+      if (!map.isStyleLoaded()) setMapFailed(true)
     })
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
 
@@ -239,7 +286,8 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
         clusterRadius: CLUSTER_RADIUS,
         clusterProperties: {
           maxScore: ['max', ['get', 'score']],
-          sumScore: ['+', ['get', 'score']],
+          sumScore: ['+', ['max', 0, ['get', 'score']]],
+          scoreCount: ['+', ['case', ['>=', ['get', 'score'], 0], 1, 0]],
         },
       })
       map.addLayer({
@@ -263,6 +311,7 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
         if (event.sourceId === 'spots-source' && event.isSourceLoaded) scheduleMarkerSync()
       })
       setIsReady(true)
+      setMapFailed(false)
     })
 
     mapRef.current = map
@@ -274,7 +323,7 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
       map.remove()
       mapRef.current = null
     }
-  }, [scheduleMarkerSync])
+  }, [scheduleMarkerSync, retryAttempt])
 
   useEffect(() => {
     const map = mapRef.current
@@ -306,7 +355,7 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
           name: spot.name,
           longitude: spot.longitude,
           latitude: spot.latitude,
-          score: scores[spot.slug] ?? 1,
+          score: scores[spot.slug] ?? -1,
         },
       })),
     })
@@ -320,7 +369,23 @@ export function ForecastMap({ spots, activeSlug, scores, focus, onSelect }: Fore
   return (
     <div className="forecast-map-shell" aria-label="Mapa interactivo de spots de surf">
       <div ref={containerRef} className="forecast-map-canvas" />
-      {!isReady && <div className="forecast-map-loading" aria-hidden="true" />}
+      {!isReady && !mapFailed && <MapLoadingSurface />}
+      {mapFailed && !isReady && (
+        <div className="map-unavailable" role="status">
+          <p>{t('mapUnavailable')}</p>
+          <button
+            type="button"
+            className="account-secondary"
+            onClick={() => {
+              setIsReady(false)
+              setMapFailed(false)
+              setRetryAttempt((attempt) => attempt + 1)
+            }}
+          >
+            {t('retry')}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

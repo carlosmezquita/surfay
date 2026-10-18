@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import {
   ArrowDownRight,
-  ArrowLeft,
   ArrowUpRight,
   Drop,
-  MapPin,
   Waves,
 } from '@phosphor-icons/react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { getSpotBySlug } from '../data/spots'
-import type { ForecastReason, ScoredForecastHour, SpotProfile } from '../domain/forecast'
+import type { ForecastReason, ScoredForecastHour } from '../domain/forecast'
 import { dailyForecasts, formatClock, formatDay } from '../domain/forecastSelectors'
 import { directionToCompass } from '../domain/scoreEngine'
 import { FORECAST_TIME_ZONE } from '../domain/forecastTime'
@@ -17,7 +15,9 @@ import { sunTimes } from '../domain/sun'
 import { nextTideExtremum, tideSeries, tideTrend } from '../domain/tideCurve'
 import { formatWavePower, wavePowerBand, wavePowerKwPerM, type WavePowerBand } from '../domain/wavePower'
 import { weatherInfo, type WeatherKind } from '../domain/weatherCode'
-import { UserMenu } from '../features/auth/UserMenu'
+import { PageNav } from '../features/layout/PageChrome'
+import { SpotDetailSkeleton } from '../features/loading/PublicPageSkeletons'
+import { SpotHeading } from '../features/forecast/SpotHeading'
 import { DayTable } from '../features/forecast/DayTable'
 import { DirectionContextMap } from '../features/forecast/DirectionContextMap'
 import { useForecast } from '../features/forecast/forecastContext'
@@ -69,20 +69,6 @@ const powerBandCopy: Record<WavePowerBand, CopyKey> = {
   heavy: 'powerHeavy',
 }
 
-const breakTypeCopy: Record<SpotProfile['breakType'], CopyKey> = {
-  beach: 'breakBeach',
-  reef: 'breakReef',
-  mixed: 'breakMixed',
-  unknown: 'breakUnknown',
-}
-
-const skillCopy: Record<SpotProfile['skillLevel'], CopyKey> = {
-  all: 'skillAll',
-  intermediate: 'skillIntermediate',
-  advanced: 'skillAdvanced',
-  unknown: 'skillUnknown',
-}
-
 const weatherCopy: Record<WeatherKind, CopyKey> = {
   clear: 'weatherClear',
   partly: 'weatherPartly',
@@ -105,6 +91,7 @@ export function SpotDetailPage() {
   const intlLocale = locale === 'gl' ? 'gl-ES' : 'es-ES'
 
   const spotForecast = spotCache.get(slug) ?? null
+  const [retryAttempt, setRetryAttempt] = useState(0)
   const [failedSlug, setFailedSlug] = useState<string | null>(null)
   const forecastStatus = spotForecast ? 'ready' : failedSlug === slug ? 'error' : 'loading'
 
@@ -114,7 +101,7 @@ export function SpotDetailPage() {
     void getSpotForecast(slug).then(() => { if (active) setFailedSlug(null) })
       .catch(() => { if (active) setFailedSlug(slug) })
     return () => { active = false }
-  }, [slug, getSpotForecast, spotCache])
+  }, [slug, getSpotForecast, spotCache, retryAttempt])
 
   const days = useMemo(() => dailyForecasts(spotForecast ?? undefined), [spotForecast])
   const [selectedDay, setSelectedDay] = useState(0)
@@ -134,36 +121,18 @@ export function SpotDetailPage() {
     }
   }, [activeDay, spot.latitude, spot.longitude, intlLocale])
 
-  if (forecastStatus === 'loading' || !selectedHour || !activeDay) {
-    if (forecastStatus === 'error') {
-      return (
-        <main className="detail-page">
-          <header className="detail-nav">
-            <Link to="/map" className="detail-nav__back">
-              <ArrowLeft size={18} /> {t('backToMap')}
-            </Link>
-            <strong>Surfay</strong>
-          </header>
-          <div className="detail-loading">
-            <p style={{ gridColumn: '1/-1', textAlign: 'center' }}>
-              {t('forecast')} — {t('cached')}
-            </p>
-          </div>
-        </main>
-      )
-    }
+  if (forecastStatus === 'loading') return <SpotDetailSkeleton spot={spot} />
+
+  if (forecastStatus === 'error' || !selectedHour || !activeDay) {
     return (
       <main className="detail-page">
-        <header className="detail-nav">
-          <Link to="/map" className="detail-nav__back">
-            <ArrowLeft size={18} /> {t('backToMap')}
-          </Link>
-          <strong>Surfay</strong>
-        </header>
-        <div className="detail-loading">
-          <span />
-          <span />
-          <span />
+        <PageNav />
+        <div className="detail-shell">
+          <section className="forecast-unavailable" role="status">
+            <p className="kicker">{spot.name}</p>
+            <h1>{t(forecastStatus === 'error' ? 'forecastError' : 'forecastEmpty')}</h1>
+            {forecastStatus === 'error' && <button type="button" className="account-secondary" onClick={() => { setFailedSlug(null); setRetryAttempt(attempt => attempt + 1) }}>{t('retry')}</button>}
+          </section>
         </div>
       </main>
     )
@@ -227,32 +196,11 @@ export function SpotDetailPage() {
 
   return (
     <main className="detail-page">
-      <header className="detail-nav">
-        <Link to="/map" className="detail-nav__back">
-          <ArrowLeft size={18} weight="bold" /> {t('backToMap')}
-        </Link>
-        <Link to="/map" className="detail-brand">
-          <span>
-            <Waves size={20} weight="bold" />
-          </span>
-          Surfay
-        </Link>
-        <div className="detail-nav__actions">
-          <UserMenu />
-        </div>
-      </header>
+      <PageNav />
 
       <div className="detail-shell">
         <div className="top-grid">
-          <section className="spot-head">
-            <p className="kicker">
-              <MapPin size={14} weight="fill" /> {spot.municipality}, {spot.province}
-            </p>
-            <h1>{spot.name}</h1>
-            <p className="spot-head__meta">
-              {t(breakTypeCopy[spot.breakType])} {'\u00b7'} {t(skillCopy[spot.skillLevel])}
-            </p>
-            <div className="spot-head__score">
+          <SpotHeading spot={spot}>
               <div
                 className={`score-dial dial-${selectedHour.score}`}
                 style={{ '--pct': selectedHour.score * 20 } as CSSProperties}
@@ -269,8 +217,7 @@ export function SpotDetailPage() {
                   {formatClock(activeDay.best.time, intlLocale)}
                 </span>
               </div>
-            </div>
-          </section>
+          </SpotHeading>
 
           <section className="directions">
             <p className="kicker">{t('directions')}</p>

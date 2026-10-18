@@ -41,7 +41,7 @@ export function DirectionContextMap({ spot, hour }: { spot: SpotProfile; hour: S
   return (
     <div className="direction-context">
       <div className="direction-map">
-        <SpotMiniMap spot={spot} />
+        <SpotMiniMap key={spot.slug} spot={spot} />
         <div className="direction-map__wash" />
         <div className="direction-map__compass" aria-hidden="true"><Compass size={18} weight="bold" /><span>N</span></div>
         <div className="direction-map__shore-label">
@@ -67,4 +67,3 @@ export function DirectionContextMap({ spot, hour }: { spot: SpotProfile; hour: S
     </div>
   )
 }
-

@@ -1,8 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { ArrowLeft, CheckCircle, SignOut, UserCircle, Waves } from '@phosphor-icons/react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowsClockwise, CheckCircle, SignOut, UserCircle } from '@phosphor-icons/react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getSpotBySlug } from '../data/spots'
 import { useLocale } from '../features/i18n/localeContext'
+import { AccountAuthHeading } from '../features/auth/AccountAuthHeading'
+import { PageNav } from '../features/layout/PageChrome'
+import { AccountAuthSkeleton, AccountReportsSkeleton } from '../features/loading/PublicPageSkeletons'
+import { Skeleton } from '../features/ui/Loading'
 import { authClient } from '../services/authClient'
 import {
   fetchEntitlements,
@@ -14,7 +18,7 @@ import {
 type Mode = 'sign-in' | 'sign-up'
 
 export function AccountPage() {
-  const { locale } = useLocale()
+  const { locale, t } = useLocale()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { data: session, isPending: sessionPending, refetch: refetchSession } = authClient.useSession()
@@ -24,8 +28,13 @@ export function AccountPage() {
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [reports, setReports] = useState<ConditionReportRecord[]>([])
-  const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
+  const [accountData, setAccountData] = useState<{ userId: string; reports: ConditionReportRecord[]; entitlements: Entitlements } | null>(null)
+  const [failedUserId, setFailedUserId] = useState<string | null>(null)
+  const [reloadAttempt, setReloadAttempt] = useState(0)
+  const userId = session?.user.id
+  const data = accountData?.userId === userId ? accountData : null
+  const dataFailed = Boolean(userId && failedUserId === userId)
+  const dataLoading = Boolean(userId && !data && !dataFailed)
 
   const copy = locale === 'gl' ? {
     back: 'Volver ao mapa', title: 'A túa conta', subtitle: 'Garda reportes e axúdanos a calibrar a costa galega.',
@@ -42,19 +51,17 @@ export function AccountPage() {
   }
 
   useEffect(() => {
-    if (!session?.user.id) return
+    if (!userId) return
     let active = true
     Promise.all([fetchMyReports(), fetchEntitlements()])
       .then(([reportPayload, entitlementPayload]) => {
         if (!active) return
-        setReports(reportPayload.reports)
-        setEntitlements(entitlementPayload)
+        setAccountData({ userId, reports: reportPayload.reports, entitlements: entitlementPayload })
+        setFailedUserId(null)
       })
-      .catch((loadError: unknown) => {
-        if (active) setError(loadError instanceof Error ? loadError.message : 'Could not load account')
-      })
+      .catch(() => { if (active) setFailedUserId(userId) })
     return () => { active = false }
-  }, [session?.user.id])
+  }, [userId, reloadAttempt])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -81,27 +88,20 @@ export function AccountPage() {
     }
   }
 
-  if (sessionPending) {
-    return <main className="account-page"><div className="account-card account-card--loading" /></main>
-  }
-
   return (
     <main className="account-page">
-      <header className="account-nav">
-        <Link to="/map"><ArrowLeft size={18} weight="bold" /> {copy.back}</Link>
-        <Link to="/map" className="detail-brand"><span><Waves size={20} weight="bold" /></span>Surfay</Link>
-      </header>
+      <PageNav account />
 
       <div className="account-shell">
-        {!session ? (
+        {sessionPending && !session ? <AccountAuthSkeleton /> : !session ? (
           <section className="account-card account-auth-card">
-            <div className="account-heading"><UserCircle size={38} weight="duotone" /><div><h1>{mode === 'sign-in' ? copy.signIn : copy.signUp}</h1><p>{copy.subtitle}</p></div></div>
-            <form onSubmit={(event) => void submit(event)}>
+            <AccountAuthHeading title={mode === 'sign-in' ? copy.signIn : copy.signUp} />
+            <form aria-busy={submitting} onSubmit={(event) => void submit(event)}>
               {mode === 'sign-up' && <label>{copy.name}<input required autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></label>}
               <label>{copy.email}<input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
               <label>{copy.password}<input required minLength={8} type="password" autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
               {error && <p className="account-error" role="alert">{error}</p>}
-              <button className="account-primary" type="submit" disabled={submitting}>{mode === 'sign-in' ? copy.signIn : copy.signUp}</button>
+              <button className="account-primary" type="submit" disabled={submitting}>{submitting && <ArrowsClockwise size={16} className="is-spinning" aria-hidden="true" />}{submitting ? t(mode === 'sign-in' ? 'signingIn' : 'signingUp') : mode === 'sign-in' ? copy.signIn : copy.signUp}</button>
             </form>
             <p className="account-switch">{mode === 'sign-in' ? copy.newHere : copy.already} <button type="button" onClick={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setError(null) }}>{mode === 'sign-in' ? copy.create : copy.enter}</button></p>
           </section>
@@ -109,17 +109,16 @@ export function AccountPage() {
           <div className="account-dashboard">
             <section className="account-card account-profile">
               <div className="account-heading"><UserCircle size={38} weight="duotone" /><div><p>{copy.account}</p><h1>{session.user.name}</h1><small>{session.user.email}</small></div></div>
-              <div className="membership-row"><span>{copy.plan}</span><strong>{entitlements?.plan === 'free' || !entitlements ? copy.free : entitlements.plan}</strong></div>
+              <div className="membership-row"><span>{copy.plan}</span><strong>{dataLoading ? <Skeleton className="plan-placeholder" /> : data ? data.entitlements.plan === 'free' ? copy.free : data.entitlements.plan : t('planUnavailable')}</strong></div>
               <p className="membership-note">{copy.memberSoon}</p>
               <button className="account-secondary" type="button" onClick={() => void authClient.signOut()}><SignOut size={18} /> {copy.signOut}</button>
             </section>
 
             <section className="account-card account-reports">
               <h2>{copy.reports}</h2>
-              {error && <p className="account-error" role="alert">{error}</p>}
-              {!reports.length ? <p className="account-empty">{copy.none}</p> : (
+              {dataFailed ? <div className="account-load-error" role="alert"><p className="account-error">{t('accountError')}</p><button type="button" className="account-secondary" onClick={() => { setFailedUserId(null); setReloadAttempt(attempt => attempt + 1) }}>{t('retry')}</button></div> : dataLoading ? <AccountReportsSkeleton /> : !data?.reports.length ? <p className="account-empty">{copy.none}</p> : (
                 <div className="account-report-list">
-                  {reports.map((report) => {
+                  {data.reports.map((report) => {
                     const spot = getSpotBySlug(report.spotSlug)
                     return <article key={report.id}><span className={`score-${report.observedScore}`}>{report.observedScore}</span><div><strong>{report.spotName ?? spot.name}</strong><p>{copy.score} · {new Intl.DateTimeFormat(locale === 'gl' ? 'gl-ES' : 'es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(report.observedAt))}</p></div><small><CheckCircle size={14} /> {copy.pending}</small></article>
                   })}

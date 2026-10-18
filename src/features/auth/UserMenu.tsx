@@ -3,15 +3,16 @@ import { ShieldCheck, SignIn, SignOut, UserCircle } from '@phosphor-icons/react'
 import { Link, useLocation } from 'react-router-dom'
 import { authClient } from '../../services/authClient'
 import { useLocale } from '../i18n/localeContext'
+import { LoadingStatus, Skeleton } from '../ui/Loading'
 
 /**
  * Account + language menu behind a single profile button, so the masthead
  * stays clean: session actions and the ES/GL switch live in this dropdown.
  */
 export function UserMenu() {
-  const { locale, setLocale } = useLocale()
+  const { locale, setLocale, t } = useLocale()
   const location = useLocation()
-  const { data: session } = authClient.useSession()
+  const { data: session, isPending } = authClient.useSession()
   const [open, setOpen] = useState(false)
   const isAdmin = (session?.user as { role?: string } | undefined)?.role === 'admin'
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -51,7 +52,7 @@ export function UserMenu() {
 
       {open && (
         <div className="user-menu__panel" role="menu">
-          {session ? (
+          {isPending && !session ? <div className="user-menu__pending" aria-busy="true"><LoadingStatus>{t('loadingSession')}</LoadingStatus><Skeleton /><Skeleton /></div> : session ? (
             <>
               <p className="user-menu__user">
                 <strong>{session.user.name}</strong>
